@@ -1,99 +1,126 @@
 import os
+import re
 import requests
+from langchain.tools import tool
 from pymongo import MongoClient
-from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
-
-# MongoDB Connection
 MONGO_URI = os.getenv("MONGO_URI")
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")  # Optional for rate limits
-
-# Ensure MongoDB is connected
 client = MongoClient(MONGO_URI)
 db = client["portfolio"]
 projects_collection = db["projects"]
 
-# Function to fetch GitHub projects
-"""
+def fetch_readme(repo_name):
+    """Fetch the README content from GitHub."""
+    url = f"https://raw.githubusercontent.com/{GITHUB_USERNAME}/{repo_name}/main/README.md"
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        return response.text
+    return None
 
+import re
 
+def parse_readme(readme_content):
+    """Extract structured data from the README content."""
+    if not readme_content:
+        return {}
 
-def fetch_github_projects():
-    url = f"https://api.github.com/users/{GITHUB_USERNAME}/repos"
-    headers = {
-        "Accept": "application/vnd.github.v3+json"
+    parsed_data = {}
+
+    # Extract Project Name - Take the first line after "#"
+    project_name_match = re.findall(r"^# (.+)", readme_content, re.MULTILINE)
+    if project_name_match:
+        parsed_data["project_name"] = project_name_match[0].strip()
+
+    # Extract Description - Take the first paragraph after "## Description"
+    description_match = re.search(r"## Description\n([\s\S]+?)(?:\n##|\Z)", readme_content)
+    if description_match:
+        parsed_data["description"] = description_match.group(1).strip()
+
+    # Extract Tech Stack
+    parsed_data["tech_stack"] = {
+        "Frontend": extract_tech(readme_content, "Frontend"),
+        "Backend": extract_tech(readme_content, "Backend"),
+        "Database": extract_tech(readme_content, "Database"),
+        "Hardware": extract_tech(readme_content, "Hardware"),
+        "Other Tools": extract_tech(readme_content, "Other Tools"),
     }
-    
-    # If a GitHub token is set, use it to avoid rate limits
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"token {GITHUB_TOKEN}"
 
-    response = requests.get(url, headers=headers)
+    # Extract Features
+    features_match = re.search(r"## Features\n([\s\S]+?)(?:\n##|\Z)", readme_content)
+    if features_match:
+        parsed_data["features"] = [line.strip("- ") for line in features_match.group(1).strip().split("\n") if line.strip()]
 
-    if response.status_code == 200:
-        projects = response.json()
+    return parsed_data
 
-        if not projects:
-            print("⚠️ No repositories found for this GitHub user.")
-            return
+def extract_tech(content, field):
+    """Extract specific tech stack fields like Frontend, Backend, etc."""
+    match = re.search(fr"- \*\*{field}:\*\* ?(.*)", content)
+    return match.group(1).strip() if match and match.group(1) else "Not specified"
 
-        # Clear old data and insert new projects
-        projects_collection.delete_many({})
-        projects_collection.insert_many(projects)
 
-        print(f"✅ Successfully added {len(projects)} projects to MongoDB!")
+def update_project_in_mongodb(repo_name):
+    """Force update GitHub project details in MongoDB."""
+    readme_content = fetch_readme(repo_name)
+    parsed_data = parse_readme(readme_content)
+
+    if parsed_data:
+        # First, unset old values to remove stale data
+        projects_collection.update_one(
+            {"name": repo_name},
+            {"$unset": {"description": "", "tech_stack": "", "features": ""}}
+        )
+
+        # Second, set the new values
+        projects_collection.update_one(
+            {"name": repo_name},
+            {"$set": parsed_data},
+            upsert=True
+        )
+
+        print(f"✅ Forced update for project: {repo_name}")
     else:
-        print(f"❌ Failed to fetch GitHub projects. Status Code: {response.status_code}")
-        print(f"Response: {response.text}")
-        
-        """
-
-def fetch_github_projects():
-    url = f"https://api.github.com/users/{GITHUB_USERNAME}/repos"
-    headers = {"Accept": "application/vnd.github.v3+json"}
-    
-    # If using a GitHub token (to prevent rate limits)
-    GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"token {GITHUB_TOKEN}"
-
-    response = requests.get(url, headers=headers)
-
-    if response.status_code == 200:
-        projects_collection.delete_many({})  # Clear old data
-        projects = response.json()
-
-        # Fetch README if description is missing
-        for project in projects:
-            if project.get("description") is None:
-                repo_name = project["name"]
-                readme_url = f"https://api.github.com/repos/{GITHUB_USERNAME}/{repo_name}/readme"
-                readme_response = requests.get(readme_url, headers=headers)
-
-                if readme_response.status_code == 200:
-                    readme_data = readme_response.json()
-                    readme_content = readme_data.get("content", "")
-                    
-                    if readme_content:
-                        import base64
-                        decoded_readme = base64.b64decode(readme_content).decode("utf-8")
-                        first_lines = "\n".join(decoded_readme.split("\n")[:3])  # Get first 3 lines
-                        project["description"] = first_lines if first_lines else "No description available"
-                    else:
-                        project["description"] = "No description available"
-                else:
-                    project["description"] = "No description available"
-
-        projects_collection.insert_many(projects)  # Insert updated data
-        print("✅ GitHub projects updated with descriptions from README!")
-    else:
-        print(f"❌ Failed to fetch GitHub projects. Status Code: {response.status_code}")
+        print(f"❌ No structured README found for {repo_name}")
 
 
-# Run the function manually
-if __name__ == "__main__":
-    print("🔄 Fetching GitHub projects and storing them in MongoDB...")
-    fetch_github_projects()
+
+@tool("github_project_search")
+def search_github_projects(query: str) -> str:
+    """Search GitHub projects stored in MongoDB by a keyword and update them."""
+    # Fetch all projects from MongoDB
+    projects = list(projects_collection.find({}, {"name": 1}))
+
+    # Update each project's data from GitHub
+    for project in projects:
+        repo_name = project["name"]
+        print(f"🔄 Updating {repo_name} from GitHub...")
+        update_project_in_mongodb(repo_name)
+
+    # Search again after updating
+    projects = list(projects_collection.find({}, {"project_name": 1, "description": 1, "tech_stack": 1, "features": 1, "html_url": 1, "_id": 0}))
+
+    if not projects:
+        return "No projects found in the database."
+
+    results = []
+    for project in projects:
+        project_name = project.get("project_name", "Unknown Project")
+        project_description = project.get("description", "No description available")
+        project_url = project.get("html_url", "#")
+        tech_stack = project.get("tech_stack", {})
+        features = project.get("features", [])
+
+        formatted_features = "\n".join([f"- {feature}" for feature in features])
+
+        results.append(f"""
+📌 **{project_name}**
+🔹 **Description:** {project_description}
+🛠 **Tech Stack:** {tech_stack}
+✨ **Features:**
+{formatted_features}
+🔗 **[View on GitHub]({project_url})**
+""")
+
+    return "\n".join(results) if results else "No matching projects found."

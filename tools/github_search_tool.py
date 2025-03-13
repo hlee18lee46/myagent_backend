@@ -11,14 +11,20 @@ client = MongoClient(MONGO_URI)
 db = client["portfolio"]
 projects_collection = db["projects"]
 
-def fetch_readme(repo_name):
-    """Fetch the README content from GitHub."""
+import time
+
+def fetch_readme(repo_name, retries=3):
     url = f"https://raw.githubusercontent.com/{GITHUB_USERNAME}/{repo_name}/main/README.md"
-    response = requests.get(url)
-    
-    if response.status_code == 200:
-        return response.text
-    return None
+    for attempt in range(retries):
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.text
+        elif response.status_code == 403:  # Rate limit
+            wait_time = 2 ** attempt
+            print(f"Rate limited. Retrying in {wait_time} seconds...")
+            time.sleep(wait_time)
+    return None  # Return None if all retries fail
+
 
 import re
 
@@ -84,25 +90,21 @@ def update_project_in_mongodb(repo_name):
     else:
         print(f"❌ No structured README found for {repo_name}")
 
-
-
 @tool("github_project_search")
 def search_github_projects(query: str) -> str:
-    """Search GitHub projects stored in MongoDB by a keyword and update them."""
-    # Fetch all projects from MongoDB
-    projects = list(projects_collection.find({}, {"name": 1}))
+    """Search GitHub projects stored in MongoDB by a keyword."""
 
-    # Update each project's data from GitHub
-    for project in projects:
-        repo_name = project["name"]
-        print(f"🔄 Updating {repo_name} from GitHub...")
-        update_project_in_mongodb(repo_name)
-
-    # Search again after updating
-    projects = list(projects_collection.find({}, {"project_name": 1, "description": 1, "tech_stack": 1, "features": 1, "html_url": 1, "_id": 0}))
+    # Fetch all projects from MongoDB (without updating)
+    projects = list(projects_collection.find(
+        {"$or": [
+            {"name": {"$regex": query, "$options": "i"}},  # Case-insensitive name match
+            {"description": {"$regex": query, "$options": "i"}}  # Case-insensitive description match
+        ]},
+        {"project_name": 1, "description": 1, "tech_stack": 1, "features": 1, "html_url": 1, "_id": 0}
+    ))
 
     if not projects:
-        return "No projects found in the database."
+        return "No matching projects found in the database."
 
     results = []
     for project in projects:
@@ -123,5 +125,4 @@ def search_github_projects(query: str) -> str:
 🔗 **[View on GitHub]({project_url})**
 """)
 
-    return "\n".join(results) if results else "No matching projects found."
-
+    return "\n".join(results)

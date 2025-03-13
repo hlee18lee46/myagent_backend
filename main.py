@@ -50,7 +50,7 @@ def fetch_github_projects():
 
 # Schedule GitHub updates (Runs daily)
 scheduler = BackgroundScheduler()
-scheduler.add_job(fetch_github_projects, "interval", days=1)
+scheduler.add_job(fetch_github_projects, "cron", hour=0)	
 scheduler.start()
 
 # 🔹 API Route to Chat with the Agent
