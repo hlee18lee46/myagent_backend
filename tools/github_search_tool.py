@@ -90,17 +90,17 @@ def update_project_in_mongodb(repo_name):
     else:
         print(f"❌ No structured README found for {repo_name}")
 
-@tool("github_project_search")
-def search_github_projects(query: str) -> str:
+@tool("github_project_search_by_name")
+def search_github_projects_by_name(query: str) -> str:
     """Search GitHub projects stored in MongoDB by a keyword."""
 
-    # Fetch all projects from MongoDB (without updating)
+    # Fetch all projects from MongoDB that match the query (case-insensitive)
     projects = list(projects_collection.find(
         {"$or": [
-            {"name": {"$regex": query, "$options": "i"}},  # Case-insensitive name match
-            {"description": {"$regex": query, "$options": "i"}}  # Case-insensitive description match
+            {"project_name": {"$regex": query, "$options": "i"}},  # Case-insensitive match on project name
+            {"description": {"$regex": query, "$options": "i"}}  # Case-insensitive match on description
         ]},
-        {"project_name": 1, "description": 1, "tech_stack": 1, "features": 1, "html_url": 1, "_id": 0}
+        {"project_name": 1, "description": 1, "tech_stack": 1, "features": 1, "html_url": 1, "demo_link": 1, "devpost_link": 1, "_id": 0}
     ))
 
     if not projects:
@@ -111,18 +111,98 @@ def search_github_projects(query: str) -> str:
         project_name = project.get("project_name", "Unknown Project")
         project_description = project.get("description", "No description available")
         project_url = project.get("html_url", "#")
+        demo_link = project.get("demo_link", "No demo available")
+        devpost_link = project.get("devpost_link", "No Devpost link available")
         tech_stack = project.get("tech_stack", {})
         features = project.get("features", [])
 
-        formatted_features = "\n".join([f"- {feature}" for feature in features])
+        # Format Features
+        formatted_features = "\n".join([f"- {feature}" for feature in features]) if features else "No features listed."
 
+        # Build Result
         results.append(f"""
 📌 **{project_name}**
 🔹 **Description:** {project_description}
 🛠 **Tech Stack:** {tech_stack}
 ✨ **Features:**
 {formatted_features}
-🔗 **[View on GitHub]({project_url})**
+🔗 **[GitHub]({project_url})**
+🌍 **Demo:** {demo_link}
+🏆 **Devpost:** {devpost_link}
+""")
+
+    return "\n".join(results)
+
+@tool("github_project_search_by_frontend")
+def search_github_projects_by_frontend(query: str) -> str:
+    """Search GitHub projects stored in MongoDB by frontend technology keyword."""
+
+    projects = list(projects_collection.find(
+        {"tech_stack.Frontend": {"$regex": query, "$options": "i"}},  # Case-insensitive match in frontend field
+        {"project_name": 1, "description": 1, "tech_stack": 1, "features": 1, "html_url": 1, "demo_link": 1, "devpost_link": 1, "_id": 0}
+    ))
+
+    if not projects:
+        return f"No projects found using frontend technology: {query}."
+
+    results = []
+    for project in projects:
+        project_name = project.get("project_name", "Unknown Project")
+        project_description = project.get("description", "No description available")
+        project_url = project.get("html_url", "#")
+        demo_link = project.get("demo_link", "No demo available")
+        devpost_link = project.get("devpost_link", "No Devpost link available")
+        frontend_tech = project.get("tech_stack", {}).get("Frontend", "Not specified")
+        features = project.get("features", [])
+
+        formatted_features = "\n".join([f"- {feature}" for feature in features]) if features else "No features listed."
+
+        results.append(f"""
+📌 **{project_name}**
+🔹 **Description:** {project_description}
+🛠 **Frontend Technology:** {frontend_tech}
+✨ **Features:**
+{formatted_features}
+🔗 **[GitHub]({project_url})**
+🌍 **Demo:** {demo_link}
+🏆 **Devpost:** {devpost_link}
+""")
+
+    return "\n".join(results)
+
+@tool("github_project_search_by_backend")
+def search_github_projects_by_backend(query: str) -> str:
+    """Search GitHub projects stored in MongoDB by backend technology keyword."""
+
+    projects = list(projects_collection.find(
+        {"tech_stack.Backend": {"$regex": query, "$options": "i"}},  # Case-insensitive match in backend field
+        {"project_name": 1, "description": 1, "tech_stack": 1, "features": 1, "html_url": 1, "demo_link": 1, "devpost_link": 1, "_id": 0}
+    ))
+
+    if not projects:
+        return f"No projects found using backend technology: {query}."
+
+    results = []
+    for project in projects:
+        project_name = project.get("project_name", "Unknown Project")
+        project_description = project.get("description", "No description available")
+        project_url = project.get("html_url", "#")
+        demo_link = project.get("demo_link", "No demo available")
+        devpost_link = project.get("devpost_link", "No Devpost link available")
+        backend_tech = project.get("tech_stack", {}).get("Backend", "Not specified")
+        features = project.get("features", [])
+
+        formatted_features = "\n".join([f"- {feature}" for feature in features]) if features else "No features listed."
+
+        results.append(f"""
+📌 **{project_name}**
+🔹 **Description:** {project_description}
+🛠 **Backend Technology:** {backend_tech}
+✨ **Features:**
+{formatted_features}
+🔗 **[GitHub]({project_url})**
+🌍 **Demo:** {demo_link}
+🏆 **Devpost:** {devpost_link}
 """)
 
     return "\n".join(results)

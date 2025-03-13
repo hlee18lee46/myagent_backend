@@ -1,0 +1,10 @@
+# Ignore Python virtual environments
+venv/
+.env
+*.env
+
+# Ignore Hugging Face cache (model downloads)
+.huggingface/
+.huggingface_cache/
+.cache/
+__pycache__/

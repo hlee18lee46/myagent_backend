@@ -1,12 +1,20 @@
 import os
 import re
 import requests
-from langchain.tools import tool
+import logging
 from pymongo import MongoClient
+from dotenv import load_dotenv
 
 # Load environment variables
+load_dotenv()
+
 MONGO_URI = os.getenv("MONGO_URI")
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# MongoDB Connection
 client = MongoClient(MONGO_URI)
 db = client["portfolio"]
 projects_collection = db["projects"]
@@ -15,12 +23,10 @@ def fetch_readme(repo_name):
     """Fetch the README content from GitHub."""
     url = f"https://raw.githubusercontent.com/{GITHUB_USERNAME}/{repo_name}/main/README.md"
     response = requests.get(url)
-    
+
     if response.status_code == 200:
         return response.text
     return None
-
-import re
 
 def parse_readme(readme_content):
     """Extract structured data from the README content."""
@@ -53,6 +59,16 @@ def parse_readme(readme_content):
     if features_match:
         parsed_data["features"] = [line.strip("- ") for line in features_match.group(1).strip().split("\n") if line.strip()]
 
+    # Extract Demo Link (if available)
+    demo_match = re.search(r"(?i)(?:Demo Link|Live Demo):?\s*(https?://[^\s]+)", readme_content)
+    if demo_match:
+        parsed_data["demo_link"] = demo_match.group(1).strip()
+
+    # Extract Devpost Link (if available)
+    devpost_match = re.search(r"(?i)(?:Devpost):?\s*(https?://devpost\.com/[^\s]+)", readme_content)
+    if devpost_match:
+        parsed_data["devpost_link"] = devpost_match.group(1).strip()
+
     return parsed_data
 
 def extract_tech(content, field):
@@ -60,67 +76,47 @@ def extract_tech(content, field):
     match = re.search(fr"- \*\*{field}:\*\* ?(.*)", content)
     return match.group(1).strip() if match and match.group(1) else "Not specified"
 
+def update_github_projects():
+    """Fetch repositories from GitHub, fetch their README files, parse them, and update MongoDB."""
+    logging.info("🔄 Fetching GitHub projects...")
 
-def update_project_in_mongodb(repo_name):
-    """Force update GitHub project details in MongoDB."""
-    readme_content = fetch_readme(repo_name)
-    parsed_data = parse_readme(readme_content)
+    url = f"https://api.github.com/users/{GITHUB_USERNAME}/repos"
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    response = requests.get(url, headers=headers)
 
-    if parsed_data:
-        # First, unset old values to remove stale data
-        projects_collection.update_one(
-            {"name": repo_name},
-            {"$unset": {"description": "", "tech_stack": "", "features": ""}}
-        )
+    if response.status_code == 200:
+        projects = response.json()
+        logging.info(f"✅ Retrieved {len(projects)} repositories from GitHub.")
 
-        # Second, set the new values
-        projects_collection.update_one(
-            {"name": repo_name},
-            {"$set": parsed_data},
-            upsert=True
-        )
+        for project in projects:
+            repo_name = project.get("name")
+            readme_content = fetch_readme(repo_name)
+            parsed_data = parse_readme(readme_content)
 
-        print(f"✅ Forced update for project: {repo_name}")
+            if parsed_data:
+                # Add project metadata from GitHub API
+                parsed_data.update({
+                    "name": repo_name,
+                    "html_url": project.get("html_url"),
+                    "created_at": project.get("created_at"),
+                    "updated_at": project.get("updated_at"),
+                    "language": project.get("language"),
+                })
+
+                # Update MongoDB
+                projects_collection.update_one(
+                    {"name": repo_name},
+                    {"$set": parsed_data},
+                    upsert=True
+                )
+                logging.info(f"✅ Updated project: {repo_name}")
+            else:
+                logging.warning(f"⚠️ No structured README found for {repo_name}")
+
+    elif response.status_code == 403:
+        logging.error("❌ GitHub API rate limit exceeded. Try again later.")
     else:
-        print(f"❌ No structured README found for {repo_name}")
+        logging.error(f"❌ Failed to fetch GitHub projects. Status Code: {response.status_code}")
 
-
-
-@tool("github_project_search")
-def search_github_projects(query: str) -> str:
-    """Search GitHub projects stored in MongoDB by a keyword and update them."""
-    # Fetch all projects from MongoDB
-    projects = list(projects_collection.find({}, {"name": 1}))
-
-    # Update each project's data from GitHub
-    for project in projects:
-        repo_name = project["name"]
-        print(f"🔄 Updating {repo_name} from GitHub...")
-        update_project_in_mongodb(repo_name)
-
-    # Search again after updating
-    projects = list(projects_collection.find({}, {"project_name": 1, "description": 1, "tech_stack": 1, "features": 1, "html_url": 1, "_id": 0}))
-
-    if not projects:
-        return "No projects found in the database."
-
-    results = []
-    for project in projects:
-        project_name = project.get("project_name", "Unknown Project")
-        project_description = project.get("description", "No description available")
-        project_url = project.get("html_url", "#")
-        tech_stack = project.get("tech_stack", {})
-        features = project.get("features", [])
-
-        formatted_features = "\n".join([f"- {feature}" for feature in features])
-
-        results.append(f"""
-📌 **{project_name}**
-🔹 **Description:** {project_description}
-🛠 **Tech Stack:** {tech_stack}
-✨ **Features:**
-{formatted_features}
-🔗 **[View on GitHub]({project_url})**
-""")
-
-    return "\n".join(results) if results else "No matching projects found."
+if __name__ == "__main__":
+    update_github_projects()

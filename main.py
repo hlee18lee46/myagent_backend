@@ -7,6 +7,7 @@ import requests
 import os
 from dotenv import load_dotenv
 from agent.tool_calling_agent import agent  # Import your LangChain Agent
+import time
 
 # Load environment variables
 load_dotenv()
@@ -48,6 +49,19 @@ def fetch_github_projects():
     else:
         print("❌ Failed to fetch GitHub projects.")
 
+def retry_with_delay(func, max_retries=3, delay=2):
+    """Retries the Gemini API call with exponential backoff."""
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            if "429" in str(e):  # Check if the error is rate limit
+                wait_time = delay * (2 ** attempt)  # Exponential backoff: 2s, 4s, 8s...
+                print(f"⚠️ Rate limited. Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                raise e  # Raise other errors immediately
+            
 # Schedule GitHub updates (Runs daily)
 scheduler = BackgroundScheduler()
 scheduler.add_job(fetch_github_projects, "cron", hour=0)	
@@ -57,7 +71,7 @@ scheduler.start()
 @app.post("/api/chat")
 def chat(request: ChatRequest):
     try:
-        response = agent.run(request.message)  # Use the existing agent
+        response = retry_with_delay(lambda: agent.run(request.message))
         return {"reply": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
