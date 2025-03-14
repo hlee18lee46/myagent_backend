@@ -1,6 +1,10 @@
 import random
+import time
+import subprocess
+import logging
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from pydantic import BaseModel
 from langchain.tools import Tool
@@ -25,6 +29,7 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
 
+
 # Initialize FastAPI
 app = FastAPI()
 
@@ -41,6 +46,10 @@ app.add_middleware(
 client = MongoClient(MONGO_URI)
 db = client["portfolio"]
 projects_collection = db["projects"]
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
 
 # Define Request Model
 class ChatRequest(BaseModel):
@@ -92,6 +101,27 @@ def rule_based_agent(user_input):
     print("⚠️ No rule-based tool found. Switching to `tool_calling_agent`.")
     return tool_calling_agent.run(user_input)
 
+# 🔹 Run mania_new.py daily
+def run_mania_script():
+    """Runs mania_new.py as a subprocess"""
+    logging.info("🔄 Running mania_new.py to update GitHub projects...")
+    try:
+        result = subprocess.run(["python", "mania_new.py"], capture_output=True, text=True)
+        logging.info(result.stdout)
+        if result.stderr:
+            logging.error(result.stderr)
+    except Exception as e:
+        logging.error(f"Error running mania_new.py: {e}")
+
+
+# 🔹 Set up APScheduler
+scheduler = BackgroundScheduler()
+scheduler.add_job(run_mania_script, "interval", days=1)  # Runs once every day
+
+# Start the scheduler
+scheduler.start()
+
+
 # API Endpoint for Chat
 @app.post("/api/chat")
 def chat(request: ChatRequest):
@@ -113,3 +143,13 @@ def chat(request: ChatRequest):
 @app.get("/")
 def root():
     return {"message": "FastAPI server is running with Rule-Based Agent and MongoDB search!"}
+
+# 🔹 Keep script running
+if __name__ == "__main__":
+    try:
+        logging.info("🚀 FastAPI server is running with APScheduler!")
+        while True:
+            time.sleep(86400)  # Keep running to allow APScheduler to trigger daily updates
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("🛑 Shutting down scheduler...")
+        scheduler.shutdown()
