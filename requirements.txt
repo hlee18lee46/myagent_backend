@@ -25,8 +25,8 @@ filelock==3.17.0
 filetype==1.2.0
 frozenlist==1.5.0
 fsspec==2025.3.0
-google-ai-generativelanguage
-google-generativeai
+google-ai-generativelanguage==0.6.16
+google-generativeai==0.6.0
 google-api-core==2.24.2
 google-api-python-client==2.163.0
 google-auth==2.38.0
