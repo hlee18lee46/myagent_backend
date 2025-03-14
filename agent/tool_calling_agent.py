@@ -31,7 +31,7 @@ llm = ChatGoogleGenerativeAI(
 
 # 🔹 Initialize OpenAI GPT-4-turbo as a fallback LLM
 fallback_llm = ChatOpenAI(
-    model_name="gpt-3.5-turbo",  
+    model_name="gpt-4-turbo",  
     openai_api_key=OPENAI_API_KEY,
     temperature=0.7,
     max_tokens=4096

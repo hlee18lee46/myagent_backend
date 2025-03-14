@@ -66,8 +66,8 @@ def rule_based_tool_selector(user_input):
         return "database_search"
     elif "hardware" in user_input_lower:
         return "hardware_search"
-    elif "project" in user_input_lower or "github" in user_input_lower:
-        return "project_search"
+    #elif "project" in user_input_lower or "github" in user_input_lower:
+        #return "project_search"
     else:
         return None  # Let LLM handle it
 
